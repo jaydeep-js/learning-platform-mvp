@@ -1,38 +1,42 @@
-import { useState } from 'react'
 import { Link, useParams } from 'react-router'
 import Icon from '../../components/icons/Icon'
 import Crumbs from '../../components/layout/Crumbs'
 import LevelBadge from '../../components/ui/LevelBadge'
 import TopicCard from './TopicCard'
 import NotFoundPage from './NotFoundPage'
-import { useToast } from '../../components/ui/Toast'
+import { PageError, PageLoading } from '../../components/ui/LoadState'
 import { useAuth } from '../auth/AuthProvider'
 import { useDocTitle } from '../../lib/useDocTitle'
 import { fmtMins } from '../../lib/format'
 import { catHref, lessonHref, subHref } from '../../lib/routes'
-import { BOOKMARKS, findTopic, flatLessons, lessonsFor, progressOf, topicsFor } from '../../data/mock'
+import { useCatalog, useTopicLessons } from '../../data/catalog'
+import { useBookmarks, useProgress, useToggleBookmark } from '../../data/learning'
 
 export default function TopicPage() {
   const { topicSlug = '' } = useParams()
   const { user } = useAuth()
-  const toast = useToast()
-  const found = findTopic(topicSlug)
-  const [marked, setMarked] = useState(() => BOOKMARKS.includes(topicSlug))
+  const { catalog, isLoading, isError, refetch } = useCatalog()
+  const lessons = useTopicLessons(topicSlug)
+  const { progress } = useProgress()
+  const { bookmarks } = useBookmarks()
+  const toggleBookmark = useToggleBookmark()
+  const found = catalog?.findTopic(topicSlug)
   useDocTitle(found ? `${found.topic.name} — Primer` : 'Primer')
-  if (!found) return <NotFoundPage />
+  if (isLoading || lessons.isLoading) return <PageLoading />
+  if (isError || !catalog || lessons.isError) return <PageError onRetry={() => void refetch()} />
+  if (!found || !lessons.units || !lessons.flat) return <NotFoundPage />
 
   const { cat, sub, topic: t } = found
-  const flat = flatLessons(t)
-  const units = lessonsFor(t)
-  const pct = progressOf(t.slug)
-  const doneCount = Math.floor((flat.length * pct) / 100)
-  const related = topicsFor(sub.slug).filter((x) => x.slug !== t.slug).slice(0, 3)
-
-  const toggleBookmark = () => {
-    const on = !marked
-    setMarked(on)
-    toast(on ? 'Saved to your bookmarks' : 'Removed from bookmarks')
-  }
+  const flat = lessons.flat
+  const units = lessons.units
+  const doneSet = progress.doneLessons
+  const doneCount = flat.filter((l) => l.id !== undefined && doneSet.has(l.id)).length
+  const pct = doneCount >= flat.length && flat.length > 0 ? 100 : Math.min(99, Math.floor((doneCount / Math.max(1, flat.length)) * 100))
+  /* Current lesson = first uncompleted, in order. */
+  const nextIdx = flat.findIndex((l) => l.id === undefined || !doneSet.has(l.id))
+  const nextN = nextIdx === -1 ? flat.length : nextIdx + 1
+  const related = catalog.topicsFor(sub.slug).filter((x) => x.slug !== t.slug).slice(0, 3)
+  const marked = t.id !== undefined && bookmarks.has(t.id)
 
   let n = 0
   return (
@@ -82,7 +86,8 @@ export default function TopicPage() {
                   {u.items.map((l) => {
                     n++
                     const idx = n
-                    const state = user ? (idx <= doneCount ? 'done' : idx === doneCount + 1 ? 'now' : '') : ''
+                    const isDone = l.id !== undefined && doneSet.has(l.id)
+                    const state = user ? (isDone ? 'done' : idx === nextN ? 'now' : '') : ''
                     return (
                       <Link key={idx} className={`lesson-row ${state}`} to={lessonHref(t.slug, idx)}>
                         <span className="lr-state" aria-hidden="true">
@@ -133,10 +138,14 @@ export default function TopicPage() {
                     {doneCount} of {flat.length} lessons finished
                   </p>
                   <div className="flex col gap-2" style={{ marginTop: 18 }}>
-                    <Link className="btn btn-primary btn-block" to={lessonHref(t.slug, Math.min(doneCount + 1, flat.length))}>
+                    <Link className="btn btn-primary btn-block" to={lessonHref(t.slug, nextN)}>
                       {pct > 0 ? 'Continue learning' : 'Start this topic'}
                     </Link>
-                    <button className={marked ? 'btn btn-secondary btn-block is-active' : 'btn btn-secondary btn-block'} onClick={toggleBookmark} aria-pressed={marked}>
+                    <button
+                      className={marked ? 'btn btn-secondary btn-block is-active' : 'btn btn-secondary btn-block'}
+                      onClick={() => t.id !== undefined && toggleBookmark.mutate({ topicId: t.id, on: !marked })}
+                      aria-pressed={marked}
+                    >
                       <Icon name={marked ? 'bookmark-fill' : 'bookmark'} className="icon-sm icon" />
                       Save for later
                     </button>

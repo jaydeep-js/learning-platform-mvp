@@ -3,9 +3,11 @@ import { Link, useSearchParams } from 'react-router'
 import Icon from '../../components/icons/Icon'
 import Crumbs from '../../components/layout/Crumbs'
 import TopicCard from './TopicCard'
+import { PageError, PageLoading } from '../../components/ui/LoadState'
 import { useDocTitle } from '../../lib/useDocTitle'
 import { searchHref } from '../../lib/routes'
-import { allTopics, type Level, type TopicContext } from '../../data/mock'
+import { useCatalog, useSearch } from '../../data/catalog'
+import type { Level } from '../../data/mock'
 
 type LevelFilter = Level | 'all'
 
@@ -16,22 +18,22 @@ const LEVEL_CHIPS: { value: LevelFilter; label: string }[] = [
   { value: 'advanced', label: 'Advanced' },
 ]
 
-/* AND-match over whitespace-split terms, same haystack as the prototype:
-   topic name + desc + subcategory name + category name. */
-function matches(x: TopicContext, q: string): boolean {
-  if (!q) return true
-  const hay = `${x.topic.name} ${x.topic.desc} ${x.sub.name} ${x.cat.name}`.toLowerCase()
-  return q.toLowerCase().split(/\s+/).every((w) => hay.includes(w))
-}
-
 export default function SearchPage() {
   useDocTitle('Search — Primer')
   const [params, setParams] = useSearchParams()
   const q = (params.get('q') ?? '').trim()
   const [level, setLevel] = useState<LevelFilter>('all')
+  const { catalog, isLoading, isError, refetch } = useCatalog()
+  /* The RPC does the matching + ranking (Postgres FTS); the cached catalog
+     resolves each slug back to full card data. Level chips filter locally. */
+  const results = useSearch(q)
 
-  const list = allTopics()
-    .filter((x) => matches(x, q))
+  if (isLoading || results.isPending) return <PageLoading />
+  if (isError || !catalog || results.isError) return <PageError onRetry={() => void refetch()} />
+
+  const list = results.data
+    .map((slug) => catalog.findTopic(slug))
+    .filter((x) => x !== null)
     .filter((x) => level === 'all' || x.topic.level === level)
 
   const onSubmit = (e: FormEvent<HTMLFormElement>) => {

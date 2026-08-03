@@ -1,28 +1,24 @@
-import { useState } from 'react'
 import { Link } from 'react-router'
 import Icon from '../../components/icons/Icon'
 import LevelBadge from '../../components/ui/LevelBadge'
-import { useToast } from '../../components/ui/Toast'
 import { useAuth } from '../auth/AuthProvider'
+import { useBookmarks, useProgress, useToggleBookmark } from '../../data/learning'
 import { fmtMins } from '../../lib/format'
 import { subHref, topicHref } from '../../lib/routes'
-import { BOOKMARKS, progressOf, type TopicContext } from '../../data/mock'
+import type { TopicContext } from '../../data/mock'
 
 /* The single reusable topic card (port of topicCardHTML in app.js).
-   Member and guest footers render conditionally from the session. */
+   Member and guest footers render conditionally from the session; progress
+   and bookmarks come from the member's real rows. */
 export default function TopicCard({ ctx }: { ctx: TopicContext }) {
   const { user } = useAuth()
-  const toast = useToast()
+  const { progress } = useProgress()
+  const { bookmarks } = useBookmarks()
+  const toggleBookmark = useToggleBookmark()
   const { cat, sub, topic: t } = ctx
-  const pct = progressOf(t.slug)
-  const [marked, setMarked] = useState(() => BOOKMARKS.includes(t.slug))
+  const pct = progress.pctOf(t.id, t.lessons)
+  const marked = t.id !== undefined && bookmarks.has(t.id)
   const href = topicHref(t.slug)
-
-  const toggleBookmark = () => {
-    const on = !marked
-    setMarked(on)
-    toast(on ? 'Saved to your bookmarks' : 'Removed from bookmarks')
-  }
 
   return (
     <article className="card card-hover topic-card" data-level={t.level} data-mins={t.mins} data-name={t.name.toLowerCase()}>
@@ -30,10 +26,10 @@ export default function TopicCard({ ctx }: { ctx: TopicContext }) {
         <Link className="tag" to={subHref(cat.slug, sub.slug)}>
           {sub.name}
         </Link>
-        {user ? (
+        {user && t.id !== undefined ? (
           <button
             className={marked ? 'btn-icon auth-user-only is-active' : 'btn-icon auth-user-only'}
-            onClick={toggleBookmark}
+            onClick={() => toggleBookmark.mutate({ topicId: t.id!, on: !marked })}
             aria-pressed={marked}
             aria-label={`Bookmark ${t.name}`}
             style={{ width: 32, height: 32 }}

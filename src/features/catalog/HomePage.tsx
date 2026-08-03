@@ -6,11 +6,11 @@ import CategoryCard from './CategoryCard'
 import { useAuth } from '../auth/AuthProvider'
 import { fmtMins } from '../../lib/format'
 import { catHref, lessonHref, searchHref, subHref, topicHref } from '../../lib/routes'
-import { CATEGORIES, findTopic, progressOf } from '../../data/mock'
+import { useCatalog } from '../../data/catalog'
+import { useInProgressTopics } from '../../data/learning'
 
 /* Curated picks, same slugs the prototype hardcodes. */
 const POPULAR_PICKS = ['javascript-basics', 'react-fundamentals', 'ui-design-foundations']
-const CONTINUE_PICKS = ['css-flexbox-mastery', 'javascript-basics', 'python-for-beginners']
 
 const PATH_STEPS = [
   { icon: 'grid', kind: 'Category', name: 'Programming', href: catHref('programming'), sub: 'One of 8 subjects · 6 subcategories', hot: false },
@@ -21,6 +21,8 @@ const PATH_STEPS = [
 
 export default function HomePage() {
   const { user } = useAuth()
+  const { catalog } = useCatalog()
+  const inProgress = useInProgressTopics(catalog)
   const navigate = useNavigate()
 
   const onSearch = (e: FormEvent<HTMLFormElement>) => {
@@ -92,8 +94,8 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Continue learning (signed-in only) */}
-      {user ? (
+      {/* Continue learning (signed-in only, hidden until something is in progress) */}
+      {user && catalog && inProgress.length > 0 ? (
         <section className="section-tight auth-user-only">
           <div className="container">
             <div className="section-head">
@@ -106,23 +108,18 @@ export default function HomePage() {
               </Link>
             </div>
             <div className="grid grid-3">
-              {CONTINUE_PICKS.map((slug) => {
-                const ctx = findTopic(slug)
-                if (!ctx) return null
-                const pct = progressOf(slug)
-                return (
-                  <Link key={slug} className="card card-hover topic-card" to={topicHref(slug)}>
-                    <span className="tag">{ctx.sub.name}</span>
-                    <h3>{ctx.topic.name}</h3>
-                    <div className="progress" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`${ctx.topic.name} progress`}>
-                      <span style={{ width: `${pct}%` }}></span>
-                    </div>
-                    <span className="small muted mono">
-                      {pct}% · {fmtMins(Math.round((ctx.topic.mins * (100 - pct)) / 100))} left
-                    </span>
-                  </Link>
-                )
-              })}
+              {inProgress.slice(0, 3).map(({ ctx, pct, remainingMins }) => (
+                <Link key={ctx.topic.slug} className="card card-hover topic-card" to={topicHref(ctx.topic.slug)}>
+                  <span className="tag">{ctx.sub.name}</span>
+                  <h3>{ctx.topic.name}</h3>
+                  <div className="progress" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`${ctx.topic.name} progress`}>
+                    <span style={{ width: `${pct}%` }}></span>
+                  </div>
+                  <span className="small muted mono">
+                    {pct}% · {fmtMins(remainingMins)} left
+                  </span>
+                </Link>
+              ))}
             </div>
           </div>
         </section>
@@ -141,7 +138,7 @@ export default function HomePage() {
             </Link>
           </div>
           <div className="grid grid-4">
-            {CATEGORIES.map((cat) => (
+            {catalog?.categories.map((cat) => (
               <CategoryCard key={cat.slug} cat={cat} />
             ))}
           </div>
@@ -162,7 +159,7 @@ export default function HomePage() {
           </div>
           <div className="grid grid-3">
             {POPULAR_PICKS.map((slug) => {
-              const ctx = findTopic(slug)
+              const ctx = catalog?.findTopic(slug)
               return ctx ? <TopicCard key={slug} ctx={ctx} /> : null
             })}
           </div>

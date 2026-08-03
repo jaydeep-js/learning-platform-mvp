@@ -1,20 +1,48 @@
 import { useState } from 'react'
 import Icon from '../../components/icons/Icon'
 import Modal from '../../components/ui/Modal'
-import { useToast } from '../../components/ui/Toast'
+import { PageError, PageLoading } from '../../components/ui/LoadState'
 import { useDocTitle } from '../../lib/useDocTitle'
-import { CATEGORIES, topicCounts, type Category } from '../../data/mock'
+import { useAdminOverview, useDeleteCategory, useSaveCategory, type AdminCategory } from '../../data/admin'
 
-/* Mock "Updated" dates — real updated_at lands in M4. */
-const UPDATED = ['Jul 29, 2026', 'Jul 26, 2026', 'Jul 22, 2026', 'Jul 20, 2026', 'Jul 18, 2026', 'Jul 15, 2026', 'Jul 12, 2026', 'Jul 10, 2026']
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
 
 export default function AdminCategoriesPage() {
   useDocTitle('Categories — Primer Admin')
-  const toast = useToast()
-  const [editing, setEditing] = useState<Category | 'new' | null>(null)
-  const [deleting, setDeleting] = useState<Category | null>(null)
+  const overview = useAdminOverview()
+  const save = useSaveCategory()
+  const remove = useDeleteCategory()
+  const [editing, setEditing] = useState<AdminCategory | 'new' | null>(null)
+  const [deleting, setDeleting] = useState<AdminCategory | null>(null)
 
+  if (overview.isPending) return <PageLoading />
+  if (overview.isError) return <PageError onRetry={() => void overview.refetch()} />
+
+  const { categories, subcategories, topics } = overview.data
   const editCat = editing !== null && editing !== 'new' ? editing : null
+
+  const subCount = (catId: number) => subcategories.filter((s) => s.category_id === catId).length
+  const topicCount = (catId: number) =>
+    topics.filter((t) => {
+      const sub = subcategories.find((s) => s.id === t.subcategory_id)
+      return sub?.category_id === catId
+    }).length
+
+  const onSave = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    const form = new FormData(e.currentTarget)
+    save.mutate(
+      {
+        id: editCat?.id,
+        name: String(form.get('name') ?? '').trim(),
+        description: String(form.get('description') ?? '').trim(),
+        sortOrder: categories.length + 1,
+      },
+      { onSuccess: () => setEditing(null) },
+    )
+  }
 
   return (
     <>
@@ -43,14 +71,14 @@ export default function AdminCategoriesPage() {
             </tr>
           </thead>
           <tbody>
-            {CATEGORIES.map((cat, i) => (
-              <tr key={cat.slug}>
+            {categories.map((cat) => (
+              <tr key={cat.id}>
                 <td>
                   <span className="td-title">{cat.name}</span>
                 </td>
-                <td className="mono">{cat.subs.length}</td>
-                <td className="mono">{topicCounts(cat.slug).topics}</td>
-                <td className="mono">{UPDATED[i]}</td>
+                <td className="mono">{subCount(cat.id)}</td>
+                <td className="mono">{topicCount(cat.id)}</td>
+                <td className="mono">{fmtDate(cat.updated_at)}</td>
                 <td>
                   <div className="td-actions">
                     <button className="btn-icon" onClick={() => setEditing(cat)} aria-label={`Edit ${cat.name}`}>
@@ -69,49 +97,45 @@ export default function AdminCategoriesPage() {
 
       <div className="flex center between wrap" style={{ marginTop: 16, gap: 12 }}>
         <span className="small muted">
-          Showing <b className="mono ink">{CATEGORIES.length}</b> of <b className="mono ink">{CATEGORIES.length}</b> categories
+          Showing <b className="mono ink">{categories.length}</b> of <b className="mono ink">{categories.length}</b> categories
         </span>
       </div>
 
       {/* Edit / add category */}
       <Modal open={editing !== null} onClose={() => setEditing(null)} labelledBy="cat-modal-title">
-        <div className="flex center between">
-          <h2 id="cat-modal-title" style={{ fontSize: 19 }}>
-            {editing === 'new' ? 'Add category' : 'Edit category'}
-          </h2>
-          <button className="btn-icon" onClick={() => setEditing(null)} aria-label="Close">
-            <Icon name="x" className="icon-sm icon" />
-          </button>
-        </div>
-        <div className="flex col gap-4" style={{ marginTop: 20 }}>
-          <div className="field">
-            <label className="label" htmlFor="cat-name">
-              Name
-            </label>
-            <input key={editCat?.slug ?? 'new'} className="input" id="cat-name" defaultValue={editCat?.name ?? ''} />
+        <form onSubmit={onSave}>
+          <div className="flex center between">
+            <h2 id="cat-modal-title" style={{ fontSize: 19 }}>
+              {editing === 'new' ? 'Add category' : 'Edit category'}
+            </h2>
+            <button className="btn-icon" type="button" onClick={() => setEditing(null)} aria-label="Close">
+              <Icon name="x" className="icon-sm icon" />
+            </button>
           </div>
-          <div className="field">
-            <label className="label" htmlFor="cat-desc">
-              Description
-            </label>
-            <textarea key={editCat?.slug ?? 'new'} className="textarea" id="cat-desc" rows={3} defaultValue={editCat?.desc ?? ''}></textarea>
-            <p className="hint">Shown on the category card and category page header.</p>
+          <div className="flex col gap-4" style={{ marginTop: 20 }}>
+            <div className="field">
+              <label className="label" htmlFor="cat-name">
+                Name
+              </label>
+              <input key={editCat?.id ?? 'new'} className="input" id="cat-name" name="name" required defaultValue={editCat?.name ?? ''} />
+            </div>
+            <div className="field">
+              <label className="label" htmlFor="cat-desc">
+                Description
+              </label>
+              <textarea key={editCat?.id ?? 'new'} className="textarea" id="cat-desc" name="description" rows={3} defaultValue={editCat?.description ?? ''}></textarea>
+              <p className="hint">Shown on the category card and category page header.</p>
+            </div>
           </div>
-        </div>
-        <div className="flex gap-2" style={{ marginTop: 24 }}>
-          <button className="btn btn-secondary btn-block" onClick={() => setEditing(null)}>
-            Cancel
-          </button>
-          <button
-            className="btn btn-primary btn-block"
-            onClick={() => {
-              setEditing(null)
-              toast('Category saved')
-            }}
-          >
-            Save changes
-          </button>
-        </div>
+          <div className="flex gap-2" style={{ marginTop: 24 }}>
+            <button className="btn btn-secondary btn-block" type="button" onClick={() => setEditing(null)}>
+              Cancel
+            </button>
+            <button className="btn btn-primary btn-block" type="submit" disabled={save.isPending}>
+              {save.isPending ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </form>
       </Modal>
 
       {/* Delete confirm */}
@@ -131,12 +155,12 @@ export default function AdminCategoriesPage() {
           </button>
           <button
             className="btn btn-danger btn-block"
+            disabled={remove.isPending}
             onClick={() => {
-              setDeleting(null)
-              toast('Category deleted')
+              if (deleting) remove.mutate(deleting.id, { onSuccess: () => setDeleting(null) })
             }}
           >
-            Delete category
+            {remove.isPending ? 'Deleting…' : 'Delete category'}
           </button>
         </div>
       </Modal>

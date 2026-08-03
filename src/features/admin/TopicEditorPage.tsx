@@ -2,13 +2,25 @@ import { useState, type KeyboardEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import Icon from '../../components/icons/Icon'
 import Modal from '../../components/ui/Modal'
+import { PageError, PageLoading } from '../../components/ui/LoadState'
 import { useToast } from '../../components/ui/Toast'
 import { useDocTitle } from '../../lib/useDocTitle'
 import { topicHref } from '../../lib/routes'
-import { CATEGORIES, findTopic, lessonsFor } from '../../data/mock'
 import NotFoundPage from '../catalog/NotFoundPage'
+import {
+  useAddLesson,
+  useAdminOverview,
+  useDeleteTopic,
+  useEditorTopic,
+  useSaveLesson,
+  useSaveTopic,
+  type AdminCategory,
+  type AdminSubcategory,
+  type EditorTopic,
+} from '../../data/admin'
+import type { TopicLevel } from '../../lib/database.types'
 
-const LEVELS = [
+const LEVELS: { value: TopicLevel; label: string }[] = [
   { value: 'beginner', label: 'Beginner' },
   { value: 'intermediate', label: 'Intermediate' },
   { value: 'advanced', label: 'Advanced' },
@@ -17,40 +29,120 @@ const LEVELS = [
 export default function TopicEditorPage() {
   const { topicSlug } = useParams()
   const isNew = !topicSlug
-  const navigate = useNavigate()
-  const toast = useToast()
-  const found = topicSlug ? findTopic(topicSlug) : null
+  const overview = useAdminOverview()
+  const editor = useEditorTopic(topicSlug)
 
   useDocTitle('Topic editor — Primer Admin')
 
-  const [selectedLesson, setSelectedLesson] = useState(0)
+  if (overview.isPending || (!isNew && editor.isPending)) return <PageLoading />
+  if (overview.isError || editor.isError) return <PageError onRetry={() => void overview.refetch()} />
+  if (!isNew && !editor.data) return <NotFoundPage />
+
+  return (
+    <EditorForm
+      key={editor.data?.id ?? 'new'}
+      topic={editor.data ?? null}
+      categories={overview.data.categories}
+      subcategories={overview.data.subcategories}
+    />
+  )
+}
+
+function EditorForm({
+  topic,
+  categories,
+  subcategories,
+}: {
+  topic: EditorTopic | null
+  categories: AdminCategory[]
+  subcategories: AdminSubcategory[]
+}) {
+  const isNew = topic === null
+  const navigate = useNavigate()
+  const toast = useToast()
+  const saveTopic = useSaveTopic()
+  const saveLesson = useSaveLesson()
+  const addLesson = useAddLesson()
+  const deleteTopic = useDeleteTopic()
+
+  const initialSub = subcategories.find((s) => s.id === topic?.subcategory_id)
+  const [title, setTitle] = useState(topic?.title ?? '')
+  const [description, setDescription] = useState(topic?.description ?? '')
+  const [level, setLevel] = useState<TopicLevel>(topic?.level ?? 'beginner')
+  const [catId, setCatId] = useState<number>(initialSub?.category_id ?? categories[0]?.id ?? 0)
+  const [subId, setSubId] = useState<number>(topic?.subcategory_id ?? subcategories.find((s) => s.category_id === (categories[0]?.id ?? 0))?.id ?? 0)
+  const [published, setPublished] = useState(topic?.status === 'published')
   const [deleteOpen, setDeleteOpen] = useState(false)
-  const [catSlug, setCatSlug] = useState(found?.cat.slug ?? CATEGORIES[0].slug)
-  const [subSlug, setSubSlug] = useState(found?.sub.slug ?? CATEGORIES[0].subs[0].slug)
 
-  if (topicSlug && !found) return <NotFoundPage />
+  const lessons = topic?.lessons ?? []
+  const units = topic?.units ?? []
+  const [selectedId, setSelectedId] = useState<number | null>(lessons[0]?.id ?? null)
+  const selected = lessons.find((l) => l.id === selectedId) ?? null
+  const [lessonBody, setLessonBody] = useState(selected?.body_md ?? '')
+  const [lessonMins, setLessonMins] = useState(selected?.minutes ?? 5)
 
-  const topic = found?.topic ?? null
-  const units = topic ? lessonsFor(topic) : []
-  const flat = units.flatMap((u, ui) => u.items.map((l) => ({ ...l, unit: u.unit, unitIndex: ui })))
-  const current = flat[selectedLesson]
-  const cat = CATEGORIES.find((c) => c.slug === catSlug) ?? CATEGORIES[0]
+  const catSubs = subcategories.filter((s) => s.category_id === catId)
 
-  const onCatChange = (slug: string) => {
-    setCatSlug(slug)
-    const nextCat = CATEGORIES.find((c) => c.slug === slug)
-    /* Dependent select: category change resets the subcategory to the first child. */
-    setSubSlug(nextCat?.subs[0]?.slug ?? '')
+  const onCatChange = (id: number) => {
+    setCatId(id)
+    /* Dependent select: switching category resets the subcategory. */
+    setSubId(subcategories.find((s) => s.category_id === id)?.id ?? 0)
   }
 
-  const rowKeyDown = (e: KeyboardEvent, idx: number) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      setSelectedLesson(idx)
+  const selectLesson = (id: number) => {
+    /* Save the outgoing lesson's edits before switching. */
+    flushLessonEdits()
+    const next = lessons.find((l) => l.id === id)
+    setSelectedId(id)
+    setLessonBody(next?.body_md ?? '')
+    setLessonMins(next?.minutes ?? 5)
+  }
+
+  const lessonDirty = selected !== null && (lessonBody !== selected.body_md || lessonMins !== selected.minutes)
+
+  const flushLessonEdits = () => {
+    if (selected && lessonDirty) {
+      saveLesson.mutate({ id: selected.id, title: selected.title, bodyMd: lessonBody, minutes: lessonMins })
     }
   }
 
-  let flatIdx = -1
+  /* Publish switch mapping (approved): ON → published; OFF → draft, except a
+     topic currently "in review" stays in review until explicitly published. */
+  const statusFor = (pub: boolean) => (pub ? 'published' : topic?.status === 'review' ? 'review' : 'draft')
+
+  const onSave = (pub: boolean) => {
+    if (!title.trim()) {
+      toast('Give the topic a title first')
+      return
+    }
+    if (!subId) {
+      toast('Pick a subcategory in Placement first')
+      return
+    }
+    setPublished(pub)
+    flushLessonEdits()
+    saveTopic.mutate(
+      { id: topic?.id, title: title.trim(), description: description.trim(), level, subcategoryId: subId, status: statusFor(pub) },
+      {
+        onSuccess: (slug) => {
+          toast(pub ? 'Topic published — live for learners' : 'Draft saved')
+          if (isNew) navigate(`/admin/topics/${slug}/edit`)
+        },
+        onError: (e) => toast(e instanceof Error ? e.message : "Couldn't save the topic"),
+      },
+    )
+  }
+
+  const rowKeyDown = (e: KeyboardEvent, id: number) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      selectLesson(id)
+    }
+  }
+
+  /* Lessons grouped under unit headers, flat-rendered like the prototype. */
+  let flatIdx = 0
+
   return (
     <>
       <Link className="small w-600" to="/admin/topics" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 14 }}>
@@ -60,22 +152,22 @@ export default function TopicEditorPage() {
 
       <div className="admin-page-head">
         <div>
-          <h1 style={{ fontSize: 24 }}>{isNew ? 'New topic' : `Edit topic: ${topic?.name}`}</h1>
+          <h1 style={{ fontSize: 24 }}>{isNew ? 'New topic' : `Edit topic: ${topic.title}`}</h1>
           <p className="small muted" style={{ marginTop: 4 }}>
             {isNew ? "Draft a new topic, add its lessons, then publish when it's ready." : 'Changes are drafts until you publish them.'}
           </p>
         </div>
         <div className="flex gap-2 wrap">
-          {!isNew && topic ? (
+          {!isNew ? (
             <Link className="btn btn-secondary" to={topicHref(topic.slug)}>
               <Icon name="eye" className="icon-sm icon" />
               Preview
             </Link>
           ) : null}
-          <button className="btn btn-secondary" onClick={() => toast('Draft saved')}>
+          <button className="btn btn-secondary" disabled={saveTopic.isPending} onClick={() => onSave(false)}>
             Save draft
           </button>
-          <button className="btn btn-primary" onClick={() => toast('Topic published — live for learners')}>
+          <button className="btn btn-primary" disabled={saveTopic.isPending} onClick={() => onSave(true)}>
             Publish
           </button>
         </div>
@@ -91,13 +183,13 @@ export default function TopicEditorPage() {
                 <label className="label" htmlFor="ed-name">
                   Title
                 </label>
-                <input className="input" id="ed-name" defaultValue={topic?.name ?? ''} />
+                <input className="input" id="ed-name" value={title} onChange={(e) => setTitle(e.target.value)} />
               </div>
               <div className="field">
                 <label className="label" htmlFor="ed-desc">
                   Description
                 </label>
-                <textarea className="textarea" id="ed-desc" rows={2} defaultValue={topic?.desc ?? ''}></textarea>
+                <textarea className="textarea" id="ed-desc" rows={2} value={description} onChange={(e) => setDescription(e.target.value)}></textarea>
                 <p className="hint">Shown on topic cards and the topic page header.</p>
               </div>
             </div>
@@ -111,70 +203,96 @@ export default function TopicEditorPage() {
                   Select a lesson to edit its content below. Learners see them in this order.
                 </p>
               </div>
-              <button className="btn btn-secondary btn-sm" onClick={() => toast('Lesson added to the end of the list')}>
+              <button
+                className="btn btn-secondary btn-sm"
+                disabled={addLesson.isPending}
+                onClick={() => {
+                  if (isNew) {
+                    toast('Save the topic first, then add lessons')
+                    return
+                  }
+                  addLesson.mutate({ topicId: topic.id, units, lessons })
+                }}
+              >
                 <Icon name="plus" className="icon-sm icon" />
                 Add lesson
               </button>
             </div>
             <div className="ed-lesson-list">
-              {flat.length === 0 ? (
+              {lessons.length === 0 ? (
                 <div className="empty" style={{ padding: 26 }}>
-                  <p className="small muted">No lessons yet. Add the first one below.</p>
+                  <p className="small muted">{isNew ? 'No lessons yet. Save the topic, then add the first one.' : 'No lessons yet. Add the first one above.'}</p>
                 </div>
               ) : (
-                units.map((u, ui) => (
-                  <div key={ui}>
-                    <div className="unit-head" style={ui === 0 ? { borderTop: 'none' } : undefined}>
-                      <span className="unit-num">UNIT {ui < 9 ? '0' : ''}{ui + 1}</span>
-                      <span className="unit-title">{u.unit}</span>
+                units.map((u, ui) => {
+                  const unitLessons = lessons.filter((l) => l.unit_id === u.id)
+                  if (unitLessons.length === 0) return null
+                  return (
+                    <div key={u.id}>
+                      <div className="unit-head" style={ui === 0 ? { borderTop: 'none' } : undefined}>
+                        <span className="unit-num">UNIT {ui < 9 ? '0' : ''}{ui + 1}</span>
+                        <span className="unit-title">{u.title}</span>
+                      </div>
+                      {unitLessons.map((l) => {
+                        flatIdx++
+                        const idx = flatIdx
+                        return (
+                          <div
+                            key={l.id}
+                            className={l.id === selectedId ? 'lesson-row now' : 'lesson-row'}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => selectLesson(l.id)}
+                            onKeyDown={(e) => rowKeyDown(e, l.id)}
+                          >
+                            <span className="lr-state" aria-hidden="true">
+                              <span className="mono">{idx < 10 ? '0' : ''}{idx}</span>
+                            </span>
+                            <span className="lr-title">{l.title}</span>
+                            <span className="lr-time">{l.id === selectedId ? lessonMins : l.minutes}m</span>
+                          </div>
+                        )
+                      })}
                     </div>
-                    {u.items.map((l) => {
-                      flatIdx++
-                      const idx = flatIdx
-                      return (
-                        <div
-                          key={idx}
-                          className={idx === selectedLesson ? 'lesson-row now' : 'lesson-row'}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => setSelectedLesson(idx)}
-                          onKeyDown={(e) => rowKeyDown(e, idx)}
-                        >
-                          <span className="lr-state" aria-hidden="true">
-                            <span className="mono">{idx + 1 < 10 ? '0' : ''}{idx + 1}</span>
-                          </span>
-                          <span className="lr-title">{l.title}</span>
-                          <span className="lr-time">{l.mins}m</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                ))
+                  )
+                })
               )}
             </div>
           </div>
 
           <div className="card card-pad">
-            <h2 style={{ fontSize: 16 }}>{current ? `Editing lesson: ${current.title}` : 'Lesson content'}</h2>
+            <h2 style={{ fontSize: 16 }}>{selected ? `Editing lesson: ${selected.title}` : 'Lesson content'}</h2>
             <div className="flex col gap-4" style={{ marginTop: 16 }}>
               <div className="field">
                 <label className="label" htmlFor="ed-lesson-body">
                   Lesson content
                 </label>
                 <textarea
-                  key={selectedLesson}
                   className="textarea"
                   id="ed-lesson-body"
                   rows={10}
-                  defaultValue={current ? `Sample body for “${current.title}”. In the real editor this loads the stored lesson content.` : ''}
+                  value={lessonBody}
+                  disabled={!selected}
+                  onChange={(e) => setLessonBody(e.target.value)}
                 ></textarea>
                 <p className="hint">Supports markdown formatting. This is the article learners read on the lesson page.</p>
               </div>
-              <div className="field" style={{ maxWidth: 200 }}>
-                <label className="label" htmlFor="ed-lesson-mins">
-                  Estimated minutes
-                </label>
-                <input key={selectedLesson} className="input mono" id="ed-lesson-mins" type="number" defaultValue={current?.mins ?? ''} />
+              <div className="flex center gap-4 wrap">
+                <div className="field" style={{ maxWidth: 200 }}>
+                  <label className="label" htmlFor="ed-lesson-mins">
+                    Estimated minutes
+                  </label>
+                  <input
+                    className="input mono"
+                    id="ed-lesson-mins"
+                    type="number"
+                    min={1}
+                    value={lessonMins}
+                    disabled={!selected}
+                    onChange={(e) => setLessonMins(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  />
+                </div>
+                {lessonDirty ? <span className="small muted">Unsaved lesson changes — saved with the topic.</span> : null}
               </div>
             </div>
           </div>
@@ -192,10 +310,11 @@ export default function TopicEditorPage() {
                 <span className="hint">Visible to learners immediately.</span>
               </span>
               <span className="switch">
-                <input type="checkbox" id="ed-status" defaultChecked={!isNew} />
+                <input type="checkbox" id="ed-status" checked={published} onChange={(e) => setPublished(e.target.checked)} />
                 <span className="track"></span>
               </span>
             </label>
+            {topic?.status === 'review' && !published ? <p className="hint" style={{ marginTop: 8 }}>Currently in review — saving keeps it in review until published.</p> : null}
           </div>
 
           <div className="card card-pad">
@@ -205,9 +324,9 @@ export default function TopicEditorPage() {
                 <label className="label" htmlFor="ed-cat">
                   Category
                 </label>
-                <select className="select" id="ed-cat" value={catSlug} onChange={(e) => onCatChange(e.target.value)}>
-                  {CATEGORIES.map((c) => (
-                    <option key={c.slug} value={c.slug}>
+                <select className="select" id="ed-cat" value={String(catId)} onChange={(e) => onCatChange(Number(e.target.value))}>
+                  {categories.map((c) => (
+                    <option key={c.id} value={String(c.id)}>
                       {c.name}
                     </option>
                   ))}
@@ -217,9 +336,9 @@ export default function TopicEditorPage() {
                 <label className="label" htmlFor="ed-subcat">
                   Subcategory
                 </label>
-                <select className="select" id="ed-subcat" value={subSlug} onChange={(e) => setSubSlug(e.target.value)}>
-                  {cat.subs.map((s) => (
-                    <option key={s.slug} value={s.slug}>
+                <select className="select" id="ed-subcat" value={String(subId)} onChange={(e) => setSubId(Number(e.target.value))}>
+                  {catSubs.map((s) => (
+                    <option key={s.id} value={String(s.id)}>
                       {s.name}
                     </option>
                   ))}
@@ -229,7 +348,7 @@ export default function TopicEditorPage() {
                 <label className="label" htmlFor="ed-level">
                   Difficulty
                 </label>
-                <select className="select" id="ed-level" defaultValue={topic?.level ?? 'beginner'}>
+                <select className="select" id="ed-level" value={level} onChange={(e) => setLevel(e.target.value as TopicLevel)}>
                   {LEVELS.map((l) => (
                     <option key={l.value} value={l.value}>
                       {l.label}
@@ -240,15 +359,17 @@ export default function TopicEditorPage() {
             </div>
           </div>
 
-          <div className="card card-pad" style={{ borderColor: '#EED4D0' }}>
-            <h2 style={{ fontSize: 16, color: 'var(--red)' }}>Danger zone</h2>
-            <p className="hint" style={{ marginTop: 6 }}>
-              Deleting removes the topic and its lessons for every learner.
-            </p>
-            <button className="btn btn-danger btn-block btn-sm" style={{ marginTop: 14 }} onClick={() => setDeleteOpen(true)}>
-              Delete this topic
-            </button>
-          </div>
+          {!isNew ? (
+            <div className="card card-pad" style={{ borderColor: '#EED4D0' }}>
+              <h2 style={{ fontSize: 16, color: 'var(--red)' }}>Danger zone</h2>
+              <p className="hint" style={{ marginTop: 6 }}>
+                Deleting removes the topic and its lessons for every learner.
+              </p>
+              <button className="btn btn-danger btn-block btn-sm" style={{ marginTop: 14 }} onClick={() => setDeleteOpen(true)}>
+                Delete this topic
+              </button>
+            </div>
+          ) : null}
         </aside>
       </div>
 
@@ -269,13 +390,19 @@ export default function TopicEditorPage() {
           </button>
           <button
             className="btn btn-danger btn-block"
+            disabled={deleteTopic.isPending}
             onClick={() => {
-              setDeleteOpen(false)
-              toast('Topic deleted')
-              navigate('/admin/topics')
+              if (topic) {
+                deleteTopic.mutate(topic.id, {
+                  onSuccess: () => {
+                    setDeleteOpen(false)
+                    navigate('/admin/topics')
+                  },
+                })
+              }
             }}
           >
-            Delete topic
+            {deleteTopic.isPending ? 'Deleting…' : 'Delete topic'}
           </button>
         </div>
       </Modal>

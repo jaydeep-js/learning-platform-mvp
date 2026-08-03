@@ -4,10 +4,12 @@ import Icon from '../../components/icons/Icon'
 import Crumbs from '../../components/layout/Crumbs'
 import TopicCard from './TopicCard'
 import NotFoundPage from './NotFoundPage'
+import { PageError, PageLoading } from '../../components/ui/LoadState'
 import { useDocTitle } from '../../lib/useDocTitle'
 import { fmtMins } from '../../lib/format'
 import { catHref } from '../../lib/routes'
-import { findSub, topicsFor, type Level } from '../../data/mock'
+import { useCatalog } from '../../data/catalog'
+import type { Level } from '../../data/mock'
 
 type LevelFilter = Level | 'all'
 type Sort = 'recommended' | 'shortest' | 'az'
@@ -29,12 +31,15 @@ export default function SubcategoryPage() {
   const { subcategorySlug = '' } = useParams()
   const [level, setLevel] = useState<LevelFilter>('all')
   const [sort, setSort] = useState<Sort>('recommended')
-  const found = findSub(subcategorySlug)
+  const { catalog, isLoading, isError, refetch } = useCatalog()
+  const found = catalog?.findSub(subcategorySlug)
   useDocTitle(found ? `${found.sub.name} — Primer` : 'Primer')
+  if (isLoading) return <PageLoading />
+  if (isError || !catalog) return <PageError onRetry={() => void refetch()} />
   if (!found) return <NotFoundPage />
 
   const { cat, sub } = found
-  const topics = topicsFor(sub.slug).map((topic) => ({ cat, sub, topic }))
+  const topics = catalog.topicsFor(sub.slug).map((topic) => ({ cat, sub, topic }))
   const totalMins = topics.reduce((a, x) => a + x.topic.mins, 0)
 
   /* Filter + sort derived during render — never mirrored into state. */

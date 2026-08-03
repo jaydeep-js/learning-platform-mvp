@@ -1,11 +1,13 @@
 import { Link } from 'react-router'
 import Icon from '../../components/icons/Icon'
 import { catHref } from '../../lib/routes'
-import { topicCounts, type Category } from '../../data/mock'
+import { useCatalog } from '../../data/catalog'
+import type { Category } from '../../data/mock'
 
 /* Port of catCardHTML in app.js. */
 export default function CategoryCard({ cat }: { cat: Category }) {
-  const counts = topicCounts(cat.slug)
+  const { catalog } = useCatalog()
+  const counts = catalog?.topicCounts(cat.slug) ?? { topics: 0, mins: 0 }
   return (
     <Link className="card card-hover cat-card" to={catHref(cat.slug)}>
       <div className="cat-icon" style={{ background: cat.tint, color: cat.tintInk }}>

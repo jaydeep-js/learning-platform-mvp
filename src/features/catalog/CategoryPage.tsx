@@ -3,28 +3,33 @@ import Icon from '../../components/icons/Icon'
 import Crumbs from '../../components/layout/Crumbs'
 import TopicCard from './TopicCard'
 import NotFoundPage from './NotFoundPage'
+import { PageError, PageLoading } from '../../components/ui/LoadState'
 import { useAuth } from '../auth/AuthProvider'
 import { useDocTitle } from '../../lib/useDocTitle'
 import { fmtMins } from '../../lib/format'
 import { subHref, topicHref } from '../../lib/routes'
-import { getCategory, progressOf, topicCounts, topicsFor, type TopicContext } from '../../data/mock'
+import { useCatalog } from '../../data/catalog'
+import { useInProgressTopics, useProgress } from '../../data/learning'
+import type { TopicContext } from '../../data/mock'
 
 export default function CategoryPage() {
   const { categorySlug = '' } = useParams()
   const { user } = useAuth()
-  const cat = getCategory(categorySlug)
+  const { catalog, isLoading, isError, refetch } = useCatalog()
+  const { progress } = useProgress()
+  const inProgress = useInProgressTopics(catalog)
+  const cat = catalog?.getCategory(categorySlug)
   useDocTitle(cat ? `${cat.name} — Primer` : 'Primer')
+  if (isLoading) return <PageLoading />
+  if (isError || !catalog) return <PageError onRetry={() => void refetch()} />
   if (!cat) return <NotFoundPage />
 
-  const counts = topicCounts(cat.slug)
-  const featured: TopicContext[] = cat.subs.flatMap((sub) => topicsFor(sub.slug).map((topic) => ({ cat, sub, topic })))
-  const sorted = featured.toSorted((a, b) => progressOf(b.topic.slug) - progressOf(a.topic.slug))
-  const resume = user
-    ? featured.find((x) => {
-        const p = progressOf(x.topic.slug)
-        return p > 0 && p < 100
-      })
-    : undefined
+  const counts = catalog.topicCounts(cat.slug)
+  const featured: TopicContext[] = cat.subs.flatMap((sub) => catalog.topicsFor(sub.slug).map((topic) => ({ cat, sub, topic })))
+  const sorted = featured.toSorted(
+    (a, b) => progress.pctOf(b.topic.id, b.topic.lessons) - progress.pctOf(a.topic.id, a.topic.lessons),
+  )
+  const resume = user ? inProgress.find((x) => x.ctx.cat.slug === cat.slug) : undefined
 
   return (
     <main>
@@ -53,10 +58,10 @@ export default function CategoryPage() {
             <div>
               <div className="r-label">Pick up where you left off</div>
               <div className="r-title">
-                {resume.topic.name} · {fmtMins(Math.round((resume.topic.mins * (100 - progressOf(resume.topic.slug))) / 100))} left
+                {resume.ctx.topic.name} · {fmtMins(resume.remainingMins)} left
               </div>
             </div>
-            <Link className="btn btn-primary btn-sm" to={topicHref(resume.topic.slug)}>
+            <Link className="btn btn-primary btn-sm" to={topicHref(resume.ctx.topic.slug)}>
               Continue <Icon name="arrow-right" className="icon-sm icon" />
             </Link>
           </div>
@@ -82,7 +87,7 @@ export default function CategoryPage() {
                   {sub.desc}
                 </p>
                 <div className="cat-count small muted">
-                  <span className="mono">{topicsFor(sub.slug).length}</span> topics
+                  <span className="mono">{catalog.topicsFor(sub.slug).length}</span> topics
                 </div>
               </Link>
             ))}

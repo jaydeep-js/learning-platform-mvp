@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Link, NavLink, Outlet, useLocation } from 'react-router'
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router'
 import Icon from '../icons/Icon'
 import Dropdown from '../ui/Dropdown'
+import { useAuth } from '../../features/auth/AuthProvider'
 
 const LINKS = [
   { to: '/admin', end: true, icon: 'grid', label: 'Dashboard' },
@@ -23,7 +24,14 @@ function drawerLinkClass({ isActive }: { isActive: boolean }) {
    Topics item active there (same as the prototype's activeMap). */
 export default function AdminLayout() {
   const location = useLocation()
+  const navigate = useNavigate()
+  const { user, logout } = useAuth()
   const [drawerOpen, setDrawerOpen] = useState(false)
+
+  const onSignOut = async () => {
+    await logout()
+    navigate('/admin/login')
+  }
 
   useEffect(() => setDrawerOpen(false), [location])
 
@@ -67,9 +75,9 @@ export default function AdminLayout() {
             trigger={
               <>
                 <span className="avatar" aria-hidden="true">
-                  JC
+                  {user?.initials ?? '?'}
                 </span>
-                Jay <Icon name="chevron-down" className="icon-sm icon" />
+                {user?.name.split(' ')[0] ?? 'Admin'} <Icon name="chevron-down" className="icon-sm icon" />
               </>
             }
           >
@@ -78,10 +86,10 @@ export default function AdminLayout() {
               View site
             </Link>
             <div className="dropdown-rule"></div>
-            <Link className="dropdown-item" to="/admin/login">
+            <button className="dropdown-item" onClick={() => void onSignOut()}>
               <Icon name="log-out" className="icon-sm icon" />
               Sign out
-            </Link>
+            </button>
           </Dropdown>
         </div>
 
@@ -112,10 +120,10 @@ export default function AdminLayout() {
               <Icon name="external-link" />
               View site
             </Link>
-            <Link className="drawer-link" to="/admin/login">
+            <button className="drawer-link" onClick={() => void onSignOut()}>
               <Icon name="log-out" />
               Sign out
-            </Link>
+            </button>
           </nav>
         </div>
       </div>

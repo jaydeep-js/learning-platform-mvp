@@ -1,18 +1,44 @@
 import { Link } from 'react-router'
 import Icon from '../../components/icons/Icon'
+import { PageError, PageLoading } from '../../components/ui/LoadState'
 import { useDocTitle } from '../../lib/useDocTitle'
+import { useAdminOverview } from '../../data/admin'
 
-/* M0: table rows and stats are mock content matching the prototype —
-   wired to real aggregate queries in M4. */
-const RECENT_TOPICS = [
-  { name: 'Machine Learning Basics', category: 'AI & Machine Learning', status: 'draft', label: 'Draft', updated: 'Aug 1, 2026' },
-  { name: 'Public Speaking Essentials', category: 'Personal Growth', status: 'review', label: 'In review', updated: 'Jul 30, 2026' },
-  { name: 'JavaScript Basics', category: 'Programming', status: 'published', label: 'Published', updated: 'Jul 29, 2026' },
-  { name: 'Introduction to HTML', category: 'Programming', status: 'published', label: 'Published', updated: 'Jul 28, 2026' },
-]
+const STATUS_LABEL = { published: 'Published', draft: 'Draft', review: 'In review' } as const
+
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
 
 export default function AdminDashboardPage() {
   useDocTitle('Admin dashboard — Primer')
+  const overview = useAdminOverview()
+  if (overview.isPending) return <PageLoading />
+  if (overview.isError) return <PageError onRetry={() => void overview.refetch()} />
+
+  const { categories, subcategories, topics } = overview.data
+  const published = topics.filter((t) => t.status === 'published').length
+  const drafts = topics.filter((t) => t.status !== 'published').length
+  const recent = topics.slice(0, 4)
+  const queue = topics.filter((t) => t.status !== 'published').slice(0, 5)
+
+  const catName = (subcategoryId: number | null) => {
+    const sub = subcategories.find((s) => s.id === subcategoryId)
+    return categories.find((c) => c.id === sub?.category_id)?.name ?? 'Unassigned'
+  }
+
+  const byCategory = categories
+    .map((c) => ({
+      name: c.name,
+      count: topics.filter((t) => {
+        const sub = subcategories.find((s) => s.id === t.subcategory_id)
+        return sub?.category_id === c.id
+      }).length,
+    }))
+    .toSorted((a, b) => b.count - a.count)
+  const topFour = byCategory.slice(0, 4)
+  const rest = byCategory.slice(4).reduce((a, c) => a + c.count, 0)
+
   return (
     <>
       <div className="admin-page-head">
@@ -39,7 +65,7 @@ export default function AdminDashboardPage() {
             <span>Total topics</span>
             <Icon name="file-text" className="icon-sm icon" />
           </div>
-          <b>128</b>
+          <b>{topics.length}</b>
         </div>
         <div className="card stat-card">
           <div className="stat-top">
@@ -48,7 +74,7 @@ export default function AdminDashboardPage() {
               <use href="#i-check-circle" />
             </svg>
           </div>
-          <b>96</b>
+          <b>{published}</b>
         </div>
         <div className="card stat-card">
           <div className="stat-top">
@@ -57,14 +83,14 @@ export default function AdminDashboardPage() {
               <use href="#i-edit" />
             </svg>
           </div>
-          <b>24</b>
+          <b>{drafts}</b>
         </div>
         <div className="card stat-card">
           <div className="stat-top">
             <span>Categories</span>
             <Icon name="folder" className="icon-sm icon" />
           </div>
-          <b>8</b>
+          <b>{categories.length}</b>
         </div>
       </div>
 
@@ -89,19 +115,19 @@ export default function AdminDashboardPage() {
             </tr>
           </thead>
           <tbody>
-            {RECENT_TOPICS.map((t) => (
-              <tr key={t.name}>
+            {recent.map((t) => (
+              <tr key={t.id}>
                 <td>
-                  <span className="td-title">{t.name}</span>
+                  <span className="td-title">{t.title}</span>
                 </td>
-                <td>{t.category}</td>
+                <td>{catName(t.subcategory_id)}</td>
                 <td>
-                  <span className={`pill pill-${t.status}`}>{t.label}</span>
+                  <span className={`pill pill-${t.status}`}>{STATUS_LABEL[t.status]}</span>
                 </td>
-                <td className="mono">{t.updated}</td>
+                <td className="mono">{fmtDate(t.updated_at)}</td>
                 <td>
                   <div className="td-actions">
-                    <Link className="btn-icon" to="/admin/topics/javascript-basics/edit" aria-label={`Edit ${t.name}`}>
+                    <Link className="btn-icon" to={`/admin/topics/${t.slug}/edit`} aria-label={`Edit ${t.title}`}>
                       <Icon name="edit" className="icon-sm icon" />
                     </Link>
                   </div>
@@ -116,26 +142,18 @@ export default function AdminDashboardPage() {
         <div className="card card-pad">
           <h2 style={{ fontSize: 16 }}>Content by category</h2>
           <ul className="flex col" style={{ gap: 12, marginTop: 16 }}>
-            <li className="flex center between small">
-              <span>Programming</span>
-              <b className="mono ink">21 topics</b>
-            </li>
-            <li className="flex center between small">
-              <span>Design</span>
-              <b className="mono ink">16 topics</b>
-            </li>
-            <li className="flex center between small">
-              <span>Business</span>
-              <b className="mono ink">16 topics</b>
-            </li>
-            <li className="flex center between small">
-              <span>Marketing</span>
-              <b className="mono ink">16 topics</b>
-            </li>
-            <li className="flex center between small">
-              <span>Everything else</span>
-              <b className="mono ink">59 topics</b>
-            </li>
+            {topFour.map((c) => (
+              <li key={c.name} className="flex center between small">
+                <span>{c.name}</span>
+                <b className="mono ink">{c.count} topics</b>
+              </li>
+            ))}
+            {rest > 0 ? (
+              <li className="flex center between small">
+                <span>Everything else</span>
+                <b className="mono ink">{rest} topics</b>
+              </li>
+            ) : null}
           </ul>
         </div>
         <div className="card card-pad">
@@ -144,18 +162,16 @@ export default function AdminDashboardPage() {
             Drafts waiting on review before they go live.
           </p>
           <ul className="flex col" style={{ gap: 12, marginTop: 16 }}>
-            <li className="flex center between small">
-              <span>Machine Learning Basics</span>
-              <span className="pill pill-draft">Draft</span>
-            </li>
-            <li className="flex center between small">
-              <span>Public Speaking Essentials</span>
-              <span className="pill pill-review">In review</span>
-            </li>
-            <li className="flex center between small">
-              <span>Graphic Design Principles</span>
-              <span className="pill pill-draft">Draft</span>
-            </li>
+            {queue.length > 0 ? (
+              queue.map((t) => (
+                <li key={t.id} className="flex center between small">
+                  <span>{t.title}</span>
+                  <span className={`pill pill-${t.status}`}>{STATUS_LABEL[t.status]}</span>
+                </li>
+              ))
+            ) : (
+              <li className="small muted">Nothing waiting — everything is live.</li>
+            )}
           </ul>
         </div>
       </div>

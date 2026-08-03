@@ -1,10 +1,14 @@
 import Crumbs from '../../components/layout/Crumbs'
 import CategoryCard from './CategoryCard'
+import { PageError, PageLoading } from '../../components/ui/LoadState'
 import { useDocTitle } from '../../lib/useDocTitle'
-import { CATEGORIES } from '../../data/mock'
+import { useCatalog } from '../../data/catalog'
 
 export default function CategoriesPage() {
   useDocTitle('All categories — Primer')
+  const { catalog, isLoading, isError, refetch } = useCatalog()
+  if (isLoading) return <PageLoading />
+  if (isError || !catalog) return <PageError onRetry={() => void refetch()} />
   return (
     <main>
       <div className="container page-head">
@@ -20,7 +24,7 @@ export default function CategoriesPage() {
       <section className="section-tight">
         <div className="container">
           <div className="grid grid-4">
-            {CATEGORIES.map((cat) => (
+            {catalog.categories.map((cat) => (
               <CategoryCard key={cat.slug} cat={cat} />
             ))}
           </div>

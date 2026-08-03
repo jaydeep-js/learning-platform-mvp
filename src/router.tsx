@@ -1,4 +1,6 @@
 import { createBrowserRouter, Outlet, ScrollRestoration } from 'react-router'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { queryClient } from './lib/queryClient'
 import IconSprite from './components/icons/IconSprite'
 import AppLayout from './components/layout/AppLayout'
 import { ToastProvider } from './components/ui/Toast'
@@ -19,13 +21,15 @@ import DashboardPage from './features/learning/DashboardPage'
 /* Root: sprite + providers render once, above every layout. */
 function Root() {
   return (
-    <AuthProvider>
-      <ToastProvider>
-        <IconSprite />
-        <Outlet />
-        <ScrollRestoration />
-      </ToastProvider>
-    </AuthProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <ToastProvider>
+          <IconSprite />
+          <Outlet />
+          <ScrollRestoration />
+        </ToastProvider>
+      </AuthProvider>
+    </QueryClientProvider>
   )
 }
 
@@ -50,17 +54,23 @@ export const router = createBrowserRouter([
         ],
       },
       { path: 'auth', Component: AuthPage },
+      { path: 'auth/reset', lazy: async () => ({ Component: (await import('./features/auth/ResetPasswordPage')).default }) },
       { path: 'admin/login', Component: AdminLoginPage },
       {
         path: 'admin',
-        lazy: async () => ({ Component: (await import('./components/layout/AdminLayout')).default }),
+        lazy: async () => ({ Component: (await import('./features/auth/RequireAdmin')).default }),
         children: [
-          { index: true, lazy: async () => ({ Component: (await import('./features/admin/AdminDashboardPage')).default }) },
-          { path: 'categories', lazy: async () => ({ Component: (await import('./features/admin/AdminCategoriesPage')).default }) },
-          { path: 'subcategories', lazy: async () => ({ Component: (await import('./features/admin/AdminSubcategoriesPage')).default }) },
-          { path: 'topics', lazy: async () => ({ Component: (await import('./features/admin/AdminTopicsPage')).default }) },
-          { path: 'topics/new', lazy: async () => ({ Component: (await import('./features/admin/TopicEditorPage')).default }) },
-          { path: 'topics/:topicSlug/edit', lazy: async () => ({ Component: (await import('./features/admin/TopicEditorPage')).default }) },
+          {
+            lazy: async () => ({ Component: (await import('./components/layout/AdminLayout')).default }),
+            children: [
+              { index: true, lazy: async () => ({ Component: (await import('./features/admin/AdminDashboardPage')).default }) },
+              { path: 'categories', lazy: async () => ({ Component: (await import('./features/admin/AdminCategoriesPage')).default }) },
+              { path: 'subcategories', lazy: async () => ({ Component: (await import('./features/admin/AdminSubcategoriesPage')).default }) },
+              { path: 'topics', lazy: async () => ({ Component: (await import('./features/admin/AdminTopicsPage')).default }) },
+              { path: 'topics/new', lazy: async () => ({ Component: (await import('./features/admin/TopicEditorPage')).default }) },
+              { path: 'topics/:topicSlug/edit', lazy: async () => ({ Component: (await import('./features/admin/TopicEditorPage')).default }) },
+            ],
+          },
         ],
       },
     ],

@@ -27,11 +27,13 @@ export interface Topic {
   mins: number
   lessons: number
   desc: string
+  /* Database id — set by the live catalog (M2+), absent in mock data. */
+  id?: number
 }
 
 export interface Unit {
   unit: string
-  items: { title: string; mins: number }[]
+  items: { title: string; mins: number; id?: number }[]
 }
 
 export interface TopicContext {
@@ -45,6 +47,8 @@ export interface FlatLesson {
   mins: number
   unit: string
   unitIndex: number
+  /* Database id — set by the live catalog (M2+), absent in mock data. */
+  id?: number
 }
 
 export const CATEGORIES: Category[] = [
@@ -163,16 +167,6 @@ const TOPICS: Record<string, Topic[]> = {
     { slug: 'how-computers-work', name: 'How Computers Work', level: 'beginner', mins: 150, lessons: 10, desc: 'Bits, memory, and CPUs — the machine under your code.' },
   ],
 }
-
-/* Signed-in demo state: topic slug → percent complete. */
-const PROGRESS: Record<string, number> = {
-  'intro-to-html': 100,
-  'css-flexbox-mastery': 64,
-  'javascript-basics': 20,
-  'python-for-beginners': 42,
-}
-
-export const BOOKMARKS: string[] = ['node-essentials', 'react-fundamentals']
 
 const LESSONS: Record<string, Unit[]> = {
   'javascript-basics': [
@@ -301,10 +295,6 @@ export function flatLessons(topic: Topic): FlatLesson[] {
     u.items.forEach((l) => out.push({ title: l.title, mins: l.mins, unit: u.unit, unitIndex: ui }))
   })
   return out
-}
-
-export function progressOf(slug: string): number {
-  return PROGRESS[slug] ?? 0
 }
 
 export function topicCounts(catSlug: string): { topics: number; mins: number } {

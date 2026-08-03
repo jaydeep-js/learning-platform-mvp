@@ -1,0 +1,3 @@
+# Supabase CLI config. Link the hosted project with:
+#   npx supabase link --project-ref <your-project-ref>
+project_id = "primer"

@@ -2,50 +2,40 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import Icon from '../../components/icons/Icon'
 import Modal from '../../components/ui/Modal'
-import { useToast } from '../../components/ui/Toast'
+import { PageError, PageLoading } from '../../components/ui/LoadState'
 import { useDocTitle } from '../../lib/useDocTitle'
 import { topicHref } from '../../lib/routes'
-import { allTopics, type TopicContext } from '../../data/mock'
+import { TOPICS_PAGE_SIZE, useAdminTopics, useDeleteTopic, type AdminTopicListRow } from '../../data/admin'
 
-const PAGE_SIZE = 20
+const STATUS_LABEL = { published: 'Published', draft: 'Draft', review: 'In review' } as const
 
-/* M0 mock statuses — the topic_status column arrives in M1; a few non-published
-   rows keep the filter chips demonstrable, mirroring the prototype's demo rows. */
-const MOCK_STATUS: Record<string, { status: 'draft' | 'review'; label: string }> = {
-  'ml-foundations-foundations': { status: 'draft', label: 'Draft' },
-  'public-speaking-foundations': { status: 'review', label: 'In review' },
-  'ui-design-foundations': { status: 'draft', label: 'Draft' },
-}
+const CHIPS = [
+  { value: 'all', label: 'All' },
+  { value: 'published', label: 'Published' },
+  { value: 'draft', label: 'Draft' },
+  { value: 'review', label: 'In review' },
+]
 
-const MOCK_DATES = ['Jul 29, 2026', 'Jul 28, 2026', 'Jul 25, 2026', 'Aug 1, 2026', 'Jul 30, 2026', 'Jul 21, 2026', 'Jul 18, 2026', 'Jul 15, 2026']
-
-function statusOf(slug: string): { status: string; label: string } {
-  return MOCK_STATUS[slug] ?? { status: 'published', label: 'Published' }
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 export default function AdminTopicsPage() {
   useDocTitle('Topics — Primer Admin')
-  const toast = useToast()
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('all')
   const [page, setPage] = useState(1)
-  const [deleting, setDeleting] = useState<TopicContext | null>(null)
+  const [deleting, setDeleting] = useState<AdminTopicListRow | null>(null)
+  /* Server-side: ilike search + status filter + .range() pagination. */
+  const topics = useAdminTopics(q.trim(), status, page)
+  const remove = useDeleteTopic()
 
-  const filtered = allTopics().filter((x) => {
-    const okQ = !q || x.topic.name.toLowerCase().includes(q.toLowerCase())
-    const okS = status === 'all' || statusOf(x.topic.slug).status === status
-    return okQ && okS
-  })
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  if (topics.isPending && !topics.data) return <PageLoading />
+  if (topics.isError) return <PageError onRetry={() => void topics.refetch()} />
+
+  const { rows, total } = topics.data
+  const pageCount = Math.max(1, Math.ceil(total / TOPICS_PAGE_SIZE))
   const safePage = Math.min(page, pageCount)
-  const visible = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
-
-  const CHIPS = [
-    { value: 'all', label: 'All' },
-    { value: 'published', label: 'Published' },
-    { value: 'draft', label: 'Draft' },
-    { value: 'review', label: 'In review' },
-  ]
 
   return (
     <>
@@ -111,40 +101,37 @@ export default function AdminTopicsPage() {
             </tr>
           </thead>
           <tbody>
-            {visible.map((x, i) => {
-              const s = statusOf(x.topic.slug)
-              return (
-                <tr key={x.topic.slug}>
-                  <td>
-                    <span className="td-title">{x.topic.name}</span>
-                  </td>
-                  <td>{x.sub.name}</td>
-                  <td className="mono">{x.topic.lessons}</td>
-                  <td>
-                    <span className={`pill pill-${s.status}`}>{s.label}</span>
-                  </td>
-                  <td className="mono">{MOCK_DATES[i % MOCK_DATES.length]}</td>
-                  <td>
-                    <div className="td-actions">
-                      <Link className="btn-icon" to={topicHref(x.topic.slug)} aria-label={`Preview ${x.topic.name}`}>
-                        <Icon name="eye" className="icon-sm icon" />
-                      </Link>
-                      <Link className="btn-icon" to={`/admin/topics/${x.topic.slug}/edit`} aria-label={`Edit ${x.topic.name}`}>
-                        <Icon name="edit" className="icon-sm icon" />
-                      </Link>
-                      <button className="btn-icon danger" onClick={() => setDeleting(x)} aria-label={`Delete ${x.topic.name}`}>
-                        <Icon name="trash" className="icon-sm icon" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              )
-            })}
+            {rows.map((t) => (
+              <tr key={t.id}>
+                <td>
+                  <span className="td-title">{t.title}</span>
+                </td>
+                <td>{t.subcategories?.name ?? 'Unassigned'}</td>
+                <td className="mono">{t.topic_lessons[0]?.count ?? 0}</td>
+                <td>
+                  <span className={`pill pill-${t.status}`}>{STATUS_LABEL[t.status]}</span>
+                </td>
+                <td className="mono">{fmtDate(t.updated_at)}</td>
+                <td>
+                  <div className="td-actions">
+                    <Link className="btn-icon" to={topicHref(t.slug)} aria-label={`Preview ${t.title}`}>
+                      <Icon name="eye" className="icon-sm icon" />
+                    </Link>
+                    <Link className="btn-icon" to={`/admin/topics/${t.slug}/edit`} aria-label={`Edit ${t.title}`}>
+                      <Icon name="edit" className="icon-sm icon" />
+                    </Link>
+                    <button className="btn-icon danger" onClick={() => setDeleting(t)} aria-label={`Delete ${t.title}`}>
+                      <Icon name="trash" className="icon-sm icon" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
 
-      {filtered.length === 0 ? (
+      {total === 0 ? (
         <div className="card" style={{ marginTop: 14 }}>
           <div className="empty">
             <div className="empty-icon">
@@ -158,19 +145,14 @@ export default function AdminTopicsPage() {
 
       <div className="flex center between wrap" style={{ marginTop: 16, gap: 12 }}>
         <span className="small muted">
-          Showing <b className="mono ink">{visible.length}</b> of <b className="mono ink">{filtered.length}</b> topics
+          Showing <b className="mono ink">{rows.length}</b> of <b className="mono ink">{total}</b> topics
         </span>
         <div className="pagination">
           <button className="page-btn" disabled={safePage <= 1} onClick={() => setPage(safePage - 1)} aria-label="Previous page">
             <Icon name="chevron-left" className="icon-sm icon" />
           </button>
           {Array.from({ length: pageCount }, (_, i) => i + 1).map((p) => (
-            <button
-              key={p}
-              className={p === safePage ? 'page-btn active' : 'page-btn'}
-              aria-current={p === safePage ? 'page' : undefined}
-              onClick={() => setPage(p)}
-            >
+            <button key={p} className={p === safePage ? 'page-btn active' : 'page-btn'} aria-current={p === safePage ? 'page' : undefined} onClick={() => setPage(p)}>
               {p}
             </button>
           ))}
@@ -197,12 +179,12 @@ export default function AdminTopicsPage() {
           </button>
           <button
             className="btn btn-danger btn-block"
+            disabled={remove.isPending}
             onClick={() => {
-              setDeleting(null)
-              toast('Topic deleted')
+              if (deleting) remove.mutate(deleting.id, { onSuccess: () => setDeleting(null) })
             }}
           >
-            Delete topic
+            {remove.isPending ? 'Deleting…' : 'Delete topic'}
           </button>
         </div>
       </Modal>

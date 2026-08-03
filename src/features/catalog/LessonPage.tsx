@@ -1,30 +1,54 @@
+import { useEffect } from 'react'
 import { Link, Navigate, useParams } from 'react-router'
 import Icon from '../../components/icons/Icon'
 import Crumbs from '../../components/layout/Crumbs'
 import NotFoundPage from './NotFoundPage'
-import { useToast } from '../../components/ui/Toast'
+import LessonBody from './LessonBody'
+import { PageError, PageLoading } from '../../components/ui/LoadState'
 import { useAuth } from '../auth/AuthProvider'
 import { useDocTitle } from '../../lib/useDocTitle'
 import { catHref, lessonHref, subHref, topicHref } from '../../lib/routes'
-import { findTopic, flatLessons, progressOf } from '../../data/mock'
+import { useCatalog, useLessonBody, useTopicLessons } from '../../data/catalog'
+import { useBookmarks, useMarkComplete, useProgress, useRecordView, useToggleBookmark } from '../../data/learning'
 
 export default function LessonPage() {
   const { topicSlug = '', n: nParam = '' } = useParams()
   const { user } = useAuth()
-  const toast = useToast()
-  const found = findTopic(topicSlug)
-  const flat = found ? flatLessons(found.topic) : []
+  const { catalog, isLoading, isError, refetch } = useCatalog()
+  const lessons = useTopicLessons(topicSlug)
+  const { progress } = useProgress()
+  const { bookmarks } = useBookmarks()
+  const toggleBookmark = useToggleBookmark()
+  const markComplete = useMarkComplete()
+  const recordView = useRecordView()
   const n = parseInt(nParam, 10)
+  const body = useLessonBody(topicSlug, Number.isFinite(n) ? n : 0)
+  const found = catalog?.findTopic(topicSlug)
+  const flat = lessons.flat ?? []
   const cur = found && n >= 1 && n <= flat.length ? flat[n - 1] : null
   useDocTitle(found && cur ? `${cur.title} — ${found.topic.name} — Primer` : 'Primer')
 
-  if (!found) return <NotFoundPage />
+  /* Feed "Recently viewed": latest lesson seen per topic. */
+  const topicId = found?.topic.id
+  const lessonId = cur?.id
+  const userId = user?.id
+  const record = recordView.mutate
+  useEffect(() => {
+    if (userId && topicId !== undefined && lessonId !== undefined) {
+      record({ topicId, lessonId })
+    }
+  }, [userId, topicId, lessonId, record])
+
+  if (isLoading || lessons.isLoading) return <PageLoading />
+  if (isError || !catalog || lessons.isError) return <PageError onRetry={() => void refetch()} />
+  if (!found || flat.length === 0) return <NotFoundPage />
   /* Out-of-range or non-numeric lesson number → first lesson. */
   if (!cur) return <Navigate to={lessonHref(topicSlug, 1)} replace />
 
   const { cat, sub, topic: t } = found
-  const pct = progressOf(t.slug)
-  const doneCount = Math.floor((flat.length * pct) / 100)
+  const doneSet = progress.doneLessons
+  const marked = t.id !== undefined && bookmarks.has(t.id)
+  const isDone = cur.id !== undefined && doneSet.has(cur.id)
   const isLast = n >= flat.length
 
   return (
@@ -63,7 +87,7 @@ export default function LessonPage() {
               <nav aria-label="Lessons in this topic" style={{ padding: 8 }}>
                 {flat.map((l, i) => {
                   const idx = i + 1
-                  const state = idx === n ? 'now' : user && idx <= doneCount ? 'done' : ''
+                  const state = idx === n ? 'now' : user && l.id !== undefined && doneSet.has(l.id) ? 'done' : ''
                   return (
                     <Link
                       key={idx}
@@ -100,17 +124,25 @@ export default function LessonPage() {
               <div className="flex center gap-2">
                 {user ? (
                   <>
-                    <button className="btn btn-hi auth-user-only" onClick={() => toast('Lesson marked complete')}>
+                    <button
+                      className="btn btn-hi auth-user-only"
+                      disabled={isDone || markComplete.isPending}
+                      onClick={() =>
+                        cur.id !== undefined &&
+                        t.id !== undefined &&
+                        markComplete.mutate({ lessonId: cur.id, topicId: t.id, minutes: cur.mins })
+                      }
+                    >
                       <Icon name="check" className="icon-sm icon" />
-                      Mark complete
+                      {isDone ? 'Completed' : 'Mark complete'}
                     </button>
                     <button
-                      className="btn-icon auth-user-only"
-                      aria-pressed="false"
-                      aria-label="Bookmark this lesson"
-                      onClick={() => toast('Saved to your bookmarks')}
+                      className={marked ? 'btn-icon auth-user-only is-active' : 'btn-icon auth-user-only'}
+                      aria-pressed={marked}
+                      aria-label="Bookmark this topic"
+                      onClick={() => t.id !== undefined && toggleBookmark.mutate({ topicId: t.id, on: !marked })}
                     >
-                      <Icon name="bookmark" className="icon-sm icon" />
+                      <Icon name={marked ? 'bookmark-fill' : 'bookmark'} className="icon-sm icon" />
                     </button>
                   </>
                 ) : (
@@ -122,48 +154,16 @@ export default function LessonPage() {
               </div>
             </div>
 
-            {/* Sample article body — replaced with stored markdown (body_md) in M2. */}
-            <div className="prose">
-              <div className="callout">
-                <b>Before you start:</b> keep a console open and run every example yourself — the point of each lesson is the practice, not the reading.
+            {/* Stored markdown, rendered into the .prose typography. */}
+            {body.isPending ? (
+              <div className="prose">
+                <p className="small muted" role="status">
+                  Loading lesson…
+                </p>
               </div>
-
-              <p>
-                Every lesson on Primer follows the same rhythm: a short explanation of the idea, a worked example you can follow along with, and a small exercise to prove it stuck. This one is no different.
-              </p>
-
-              <h2>The idea</h2>
-              <p>
-                Programs are just instructions executed in order. Before worrying about syntax, get comfortable with the shape of the workflow: write a small piece of code, run it, read what happens, adjust. That loop — <em>write, run, read, adjust</em> — is the actual skill. The language details attach themselves to it with practice.
-              </p>
-              <p>Open your browser's console and type:</p>
-              <pre>
-                <code>{`console.log("Hello from Primer!");
-
-let lessonsFinished = 2;
-console.log("Lessons finished: " + lessonsFinished);`}</code>
-              </pre>
-              <p>
-                Two things just happened. You told the machine to print a message, and it did — immediately, with no build step and nothing to install. This tight feedback loop is why we start in the console.
-              </p>
-
-              <h2>Try it yourself</h2>
-              <ul>
-                <li>Change the message inside the quotes and run it again.</li>
-                <li>
-                  Make <code>lessonsFinished</code> a bigger number. What prints now?
-                </li>
-                <li>Remove the quotes around the message and read the error. Errors are information, not judgment.</li>
-              </ul>
-
-              <h2>What to remember</h2>
-              <ol>
-                <li>Code runs top to bottom, one instruction at a time.</li>
-                <li>The console is the fastest place to test an idea.</li>
-                <li>Reading errors calmly is half the job.</li>
-              </ol>
-              <p>When the exercise above feels comfortable, mark this lesson complete and move on — the next one builds directly on it.</p>
-            </div>
+            ) : (
+              <LessonBody markdown={body.data ?? ''} />
+            )}
 
             <div className="reader-footnav">
               {n > 1 ? (

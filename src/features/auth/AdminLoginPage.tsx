@@ -1,16 +1,39 @@
-import type { FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router'
 import Icon from '../../components/icons/Icon'
 import { useDocTitle } from '../../lib/useDocTitle'
+import { supabase } from '../../lib/supabase'
 
 export default function AdminLoginPage() {
   useDocTitle('Admin sign in — Primer')
+  const [formError, setFormError] = useState('')
+  const [busy, setBusy] = useState(false)
   const navigate = useNavigate()
 
-  /* M0: navigates straight in — real role-checked sign-in lands in M4. */
-  const onSubmit = (e: FormEvent<HTMLFormElement>) => {
+  const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    navigate('/admin')
+    const form = new FormData(e.currentTarget)
+    const email = String(form.get('email') ?? '').trim()
+    const password = String(form.get('password') ?? '')
+    setFormError('')
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+      if (error) {
+        setFormError(error.message === 'Invalid login credentials' ? "That email and password don't match." : error.message)
+        return
+      }
+      /* Gate is UX only — RLS blocks non-admin writes regardless. */
+      const { data: profile } = await supabase.from('profiles').select('role').eq('id', data.user.id).single()
+      if (profile?.role !== 'admin') {
+        await supabase.auth.signOut()
+        setFormError("This account doesn't have admin access.")
+        return
+      }
+      navigate('/admin')
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
@@ -25,14 +48,14 @@ export default function AdminLoginPage() {
           Manage categories, subcategories, topics, and lesson content.
         </p>
 
-        <form className="flex col gap-4" style={{ marginTop: 22 }} onSubmit={onSubmit}>
+        <form className="flex col gap-4" style={{ marginTop: 22 }} onSubmit={(e) => void onSubmit(e)}>
           <div className="field">
             <label className="label" htmlFor="ad-email">
               Admin email
             </label>
             <div className="input-wrap">
               <Icon name="mail" />
-              <input className="input" id="ad-email" type="email" placeholder="admin@primer.app" />
+              <input className="input" id="ad-email" name="email" type="email" placeholder="admin@primer.app" autoComplete="email" />
             </div>
           </div>
           <div className="field">
@@ -41,11 +64,16 @@ export default function AdminLoginPage() {
             </label>
             <div className="input-wrap">
               <Icon name="lock" />
-              <input className="input" id="ad-pass" type="password" placeholder="••••••••" />
+              <input className="input" id="ad-pass" name="password" type="password" placeholder="••••••••" autoComplete="current-password" />
             </div>
           </div>
-          <button className="btn btn-primary btn-block" type="submit">
-            Sign in to admin
+          {formError ? (
+            <p className="hint" style={{ color: 'var(--red)' }} role="alert">
+              {formError}
+            </p>
+          ) : null}
+          <button className="btn btn-primary btn-block" type="submit" disabled={busy}>
+            {busy ? 'Signing in…' : 'Sign in to admin'}
           </button>
         </form>
       </div>
